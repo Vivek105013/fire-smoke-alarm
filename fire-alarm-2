@@ -1,0 +1,131 @@
+#include <SoftwareSerial.h>
+
+#define SMOKE_SENSOR A0  
+#define FIRE_SENSOR 6    
+#define BUZZER 7        
+#define RED_LED 3       
+#define GREEN_LED 4      
+#define GSM_TX 9         
+#define GSM_RX 10        
+
+SoftwareSerial gsm(GSM_TX, GSM_RX);  
+
+bool alertTriggered = false;  
+
+void setup() {
+  pinMode(SMOKE_SENSOR, INPUT);
+  pinMode(FIRE_SENSOR, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+
+  Serial.begin(9600);
+  gsm.begin(9600);
+  
+  Serial.println("Initializing GSM...");
+  if (initializeGSM()) {
+    Serial.println("System Ready");
+    digitalWrite(GREEN_LED, HIGH);
+  } else {
+    Serial.println("GSM ERROR!");
+  }
+}
+
+void loop() {
+  int smokeValue = readStableSmoke();
+  int fireValue = digitalRead(FIRE_SENSOR);
+
+  Serial.print("Smoke: ");
+  Serial.println(smokeValue);
+
+  if ((smokeValue > 400 || fireValue == LOW) && !alertTriggered) {
+    alertTriggered = true;
+    triggerAlert();
+  } 
+  else if (smokeValue <= 400 && fireValue == HIGH) {
+    resetAlert();
+  }
+  delay(1000);
+}
+
+void triggerAlert() {
+  Serial.println("FIRE/SMOKE ALERT!");
+
+  digitalWrite(RED_LED, HIGH);
+  digitalWrite(GREEN_LED, LOW);
+  digitalWrite(BUZZER, HIGH);
+
+  sendSMS("Fire or Smoke Detected! Take immediate action!");
+  delay(3000);
+  sendSMS("Approx location https://maps.app.goo.gl/w3GuSyqBVGgmmr2y5");
+  delay(3000);
+  sendCellTowerLocation();  // New function to get location without GPS
+  makeCall();
+  digitalWrite(BUZZER, LOW);
+}
+
+void resetAlert() {
+  alertTriggered = false;
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, HIGH);
+  digitalWrite(BUZZER, LOW);
+  Serial.println("System Ready");
+}
+
+int readStableSmoke() {
+  int sum = 0;
+  for (int i = 0; i < 5; i++) {
+    sum += analogRead(SMOKE_SENSOR);
+    delay(10);
+  }
+  return sum / 5;
+}
+
+bool initializeGSM() {
+  gsm.println("AT");
+  delay(1000);
+  if (gsm.available()) {
+    String response = gsm.readString();
+    return response.indexOf("OK") != -1;
+  }
+  return false;
+}
+
+void sendSMS(String message) {
+  gsm.println("AT+CMGF=1");  
+  delay(1000);
+  gsm.print("AT+CMGS=\"+916305977029\"\r");  
+  delay(1000);
+  gsm.print(message);
+  delay(500);
+  gsm.write(26);
+  delay(5000);
+}
+
+void makeCall() {
+  gsm.println("AT+CHUP");
+  delay(1000);
+  gsm.print("ATD+916305977029;\r");
+  delay(15000);
+}
+
+// 📌 **Function to get approximate location using Cell Tower Data**
+void sendCellTowerLocation() {
+  gsm.println("AT+CREG=2");  // Enable network registration info
+  delay(1000);
+  gsm.println("AT+CREG?");   // Get LAC and CID
+  delay(2000);
+
+  if (gsm.available()) {
+    String response = gsm.readString();
+    Serial.println(response);
+    
+    int lacIndex = response.indexOf(",\"") + 2;
+    int cidIndex = response.indexOf(",\"", lacIndex) + 2;
+    String lac = response.substring(lacIndex, response.indexOf("\"", lacIndex));
+    String cid = response.substring(cidIndex, response.indexOf("\"", cidIndex));
+
+    String locationURL = "https://www.google.com/maps/search/?api=1&query=" + lac + "," + cid;
+    sendSMS("Fire Alert! Approximate Location: " + locationURL);
+  }
+}
