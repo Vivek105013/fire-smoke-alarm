@@ -1,0 +1,87 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C_Hangul.h>
+#include <SoftwareSerial.h>
+#define SMOKE_SENSOR A0
+#define FIRE_SENSOR 6
+#define BUZZER 5
+#define RED_LED 3
+#define GREEN_LED 4
+#define GSM_TX 9
+#define GSM_RX 10
+SoftwareSerial gsm(GSM_TX, GSM_RX);
+LiquidCrystal_I2C_Hangul lcd(0x27, 16, 2);
+bool alertTriggered = false;
+void setup() {
+  pinMode(SMOKE_SENSOR, INPUT);
+  pinMode(FIRE_SENSOR, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  Serial.begin(9600);
+  gsm.begin(9600);
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("System Ready");
+  digitalWrite(GREEN_LED, HIGH);
+}
+void loop() {
+  int smokeValue = readStableSmoke();
+  int fireValue = digitalRead(FIRE_SENSOR);
+  lcd.setCursor(0, 1);
+  lcd.print("Smoke: ");
+  lcd.print(smokeValue);
+  lcd.print("    ");
+  if ((smokeValue > 400 || fireValue == LOW) && !alertTriggered) {
+    alertTriggered = true;
+    triggerAlert();
+  } else if (smokeValue <= 400 && fireValue == HIGH) {
+    resetAlert();
+  }
+  delay(1000);
+}
+void triggerAlert() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("FIRE/SMOKE ALERT!");
+  digitalWrite(RED_LED, HIGH);
+  digitalWrite(GREEN_LED, LOW);
+  digitalWrite(BUZZER, HIGH);
+  sendSMS("Fire or Smoke Detected! Take immediate action!");
+  delay(3000);
+  makeCall();
+  digitalWrite(BUZZER, LOW);
+}
+void resetAlert() {
+  alertTriggered = false;
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(GREEN_LED, HIGH);
+  digitalWrite(BUZZER, LOW);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("System Ready");
+}
+int readStableSmoke() {
+  int sum = 0;
+  for (int i = 0; i < 5; i++) {
+    sum += analogRead(SMOKE_SENSOR);
+    delay(10);
+  }
+  return sum / 5;
+}
+void sendSMS(String message) {
+  gsm.println("AT+CMGF=1");
+  delay(1000);
+  gsm.println("AT+CMGS=\"9292058888\"");
+  delay(1000);
+  gsm.println(message);
+  delay(1000);
+  gsm.write(26);
+  delay(5000);
+}
+void makeCall() {
+  gsm.println("AT+CHUP");
+  delay(1000);
+  gsm.println("ATD9292058888;");
+  delay(1000);
+}
